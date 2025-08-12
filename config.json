@@ -1,0 +1,77 @@
+{
+  "timezone": "Europe/Moscow",
+  "language": "ru",
+  "telegram": {
+    "chat_id": "453863954",
+    "parse_mode": "HTML",
+    "split_long_messages": true,
+    "max_message_length": 3500
+  },
+  "schedule": {
+    "digest_cron_utc": "0 5 * * *",
+    "dnd": { "enabled": false, "start": "23:00", "end": "08:00" }
+  },
+  "watchlists": {
+    "tickers": ["BTC", "ETH", "SOL", "ARB", "OP", "TON"],
+    "exchanges": ["binance", "coinbase", "okx", "bybit", "kraken"]
+  },
+  "sections": {
+    "macro": {
+      "enabled": true,
+      "regions": ["US", "EU", "UK"],
+      "high_impact_only": true,
+      "indicators": ["CPI", "Core CPI", "PCE", "NFP", "Unemployment Rate", "FOMC Rate Decision", "ISM PMI", "GDP QoQ"]
+    },
+    "listings": {
+      "enabled": true,
+      "base_assets_only": true,
+      "min_mcap_usd": 300000000,
+      "exchanges": ["binance", "coinbase", "kraken", "okx", "bybit"]
+    },
+    "derivatives": {
+      "enabled": true,
+      "deribit_expiry_notional_min_usd": 500000000,
+      "cme_watch": true,
+      "funding_extreme_threshold": 0.15,
+      "oi_change_threshold_pct": 10
+    },
+    "unlocks": {
+      "enabled": true,
+      "min_usd": 30000000,
+      "min_circ_pct": 1.0,
+      "sources": ["token_unlocks"]
+    },
+    "protocols": {
+      "enabled": true,
+      "networks": ["ethereum", "solana", "arbitrum", "optimism", "base", "avalanche"],
+      "include_maintenance": true,
+      "include_outages": true
+    },
+    "governance": {
+      "enabled": false,
+      "daos": ["aave", "uniswap", "maker", "curve", "lido"]
+    },
+    "risk": {
+      "enabled": true,
+      "depeg_threshold_pct": 0.5,
+      "incident_severity_min": "high",
+      "min_loss_usd": 1000000
+    }
+  },
+  "sources": {
+    "macro": ["tradingeconomics", "investing_rss"],
+    "listings": {
+      "binance": "https://www.binance.com/en/support/announcement/rss",
+      "coinbase": "https://blog.coinbase.com/feed",
+      "okx": "https://www.okx.com/help/rss/announcements",
+      "bybit": "https://announcements.bybit.com/en-US/rss.xml",
+      "kraken": "https://blog.kraken.com/feed"
+    },
+    "unlocks": { "token_unlocks": "api" },
+    "derivatives": { "deribit": "https://www.deribit.com/api/v2/public/get_instruments" },
+    "status_pages": {
+      "solana": "https://status.solana.com/history.rss",
+      "ethereum": "https://blog.ethereum.org/feed"
+    }
+  }
+}

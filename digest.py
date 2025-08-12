@@ -6,13 +6,13 @@ try:
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # pip install backports.zoneinfo
 
-TOKEN = os.environ.get("7452343195:AAHLgYhOaBT4_SEUgGZWJ2EX67hN8_g0RCA") or os.environ.get("7452343195:AAHLgYhOaBT4_SEUgGZWJ2EX67hN8_g0RCA")
-CHAT_ID = os.environ.get("453863954 or os.environ.get("453863954")
+TOKEN = os.environ.get("TELEGRAM_TOKEN") or os.environ.get("TG_TOKEN")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("TG_CHAT_ID")
 
 def send_message(text, parse_mode="HTML", disable_preview=True):
-    url = f"https://api.telegram.org/bot{7452343195:AAHLgYhOaBT4_SEUgGZWJ2EX67hN8_g0RCA}/sendMessage"
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {
-        "chat_id": 453863954,
+        "chat_id": CHAT_ID,
         "text": text,
         "parse_mode": parse_mode,
         "disable_web_page_preview": disable_preview
@@ -34,7 +34,7 @@ def build_digest():
     return "\n".join(lines)
 
 if __name__ == "__main__":
-    assert 7452343195:AAHLgYhOaBT4_SEUgGZWJ2EX67hN8_g0RCA and CHAT_ID, "Не заданы TELEGRAM_TOKEN/TG_TOKEN и TELEGRAM_CHAT_ID/TG_CHAT_ID"
+    assert TOKEN and CHAT_ID, "Не заданы TELEGRAM_TOKEN/TG_TOKEN и TELEGRAM_CHAT_ID/TG_CHAT_ID"
     msg = build_digest()
     resp = send_message(msg)
     print("OK:", resp.get("ok"), "message_id:", resp.get("result", {}).get("message_id"))

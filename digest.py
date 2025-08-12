@@ -1,0 +1,40 @@
+import os
+import requests
+from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # pip install backports.zoneinfo
+
+TOKEN = os.environ.get("7452343195:AAHLgYhOaBT4_SEUgGZWJ2EX67hN8_g0RCA") or os.environ.get("7452343195:AAHLgYhOaBT4_SEUgGZWJ2EX67hN8_g0RCA")
+CHAT_ID = os.environ.get("453863954 or os.environ.get("453863954")
+
+def send_message(text, parse_mode="HTML", disable_preview=True):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {
+        "chat_id": 453863954,
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": disable_preview
+    }
+    r = requests.post(url, data=payload, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+def build_digest():
+    now_msk = datetime.now(ZoneInfo("Europe/Moscow")).strftime("%Y-%m-%d %H:%M")
+    lines = [
+        f"<b>Дайджест</b> — {now_msk} МСК",
+        "• Макро сегодня: пример — CPI/NFP/FOMC (боевой список подключу).",
+        "• Биржи: листинги/техработы — пример.",
+        "• Деривативы: экспирации, узлы OI — пример.",
+        "• Разлоки: порог > $25–30M или >1% цирк. — пример.",
+        "• План: риск‑чек; избегать входов за T‑5 к красным событиям."
+    ]
+    return "\n".join(lines)
+
+if __name__ == "__main__":
+    assert 7452343195:AAHLgYhOaBT4_SEUgGZWJ2EX67hN8_g0RCA and CHAT_ID, "Не заданы TELEGRAM_TOKEN/TG_TOKEN и TELEGRAM_CHAT_ID/TG_CHAT_ID"
+    msg = build_digest()
+    resp = send_message(msg)
+    print("OK:", resp.get("ok"), "message_id:", resp.get("result", {}).get("message_id"))

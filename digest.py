@@ -5,8 +5,6 @@ from zoneinfo import ZoneInfo
 import requests, feedparser
 from dateutil import parser as dtp
 
-CONFIG_PATH = None
-
 def load_config(path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
@@ -43,7 +41,7 @@ def tg_send(token, chat_id, text, parse_mode="HTML", disable_preview=True):
         "parse_mode": parse_mode,
         "disable_web_page_preview": "true" if disable_preview else "false",
     }
-    r = requests.post(url, data=data, timeout=20)
+    r = requests.post(url, data=data, timeout=30)
     if r.status_code >= 400:
         raise RuntimeError(f"Telegram send error {r.status_code}: {r.text}")
     return r.json()
@@ -62,6 +60,15 @@ def normalize_entry_time(entry):
     # Fallback: now
     return now_utc()
 
+def fetch_json(url, params=None, timeout=25):
+    try:
+        r = requests.get(url, params=params or {}, timeout=timeout)
+        if r.status_code == 200:
+            return r.json()
+        return None
+    except Exception:
+        return None
+
 def fetch_rss_items(url, limit=50):
     try:
         feed = feedparser.parse(url)
@@ -73,28 +80,27 @@ def fetch_rss_items(url, limit=50):
             summary = (e.get("summary") or "").strip()
             items.append({"title": title, "link": link, "time": t, "summary": summary})
         return items
-    except Exception as e:
+    except Exception:
         return []
+
+# ----------------- Sections -----------------
 
 def section_listings(cfg, tz):
     if not cfg["sections"]["listings"]["enabled"]:
         return {"today": [], "tomorrow": [], "errors": []}
     srcs = cfg["sources"].get("listings", {})
     items = []
-    errors = []
     for name, url in srcs.items():
         it = fetch_rss_items(url, limit=40)
         for e in it:
-            title = e["title"]
-            if any(k in title.lower() for k in ["will list", "lists", "listing", "launches", "new listing", "listare", "листинг", "список"]):
+            title_l = e["title"].lower()
+            if any(k in title_l for k in ["will list", "lists", "listing", "launches", "new listing", "листинг", "запуст", "список"]):
                 items.append({**e, "source": name})
-    # Group by local day
     tzinfo = ZoneInfo(tz)
     now_local = now_utc().astimezone(tzinfo)
     today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     tomorrow_end = today_start + timedelta(days=2)
-
     today, tomorrow = [], []
     for e in items:
         lt = e["time"].astimezone(tzinfo)
@@ -102,25 +108,21 @@ def section_listings(cfg, tz):
             today.append(e)
         elif within_day(lt, today_end, tomorrow_end):
             tomorrow.append(e)
-
-    # Keep up to N
     N = 5
     return {
-        "today": sorted(today, key=lambda x: x["time"])[:N],
-        "tomorrow": sorted(tomorrow, key=lambda x: x["time"])[:N],
-        "errors": errors
+        "today": sorted(today, key=lambda x: x["time"], reverse=True)[:N],
+        "tomorrow": sorted(tomorrow, key=lambda x: x["time"], reverse=True)[:N],
+        "errors": []
     }
 
 def section_status(cfg, tz):
     srcs = cfg["sources"].get("status_pages", {})
-    items = []
     tzinfo = ZoneInfo(tz)
     now_local = now_utc().astimezone(tzinfo)
     today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     tomorrow_end = today_start + timedelta(days=2)
     today, tomorrow = [], []
-
     for name, url in srcs.items():
         for e in fetch_rss_items(url, limit=30):
             lt = e["time"].astimezone(tzinfo)
@@ -129,117 +131,236 @@ def section_status(cfg, tz):
                 today.append(entry)
             elif within_day(lt, today_end, tomorrow_end):
                 tomorrow.append(entry)
-
     N = 5
     return {
-        "today": sorted(today, key=lambda x: x["time"])[:N],
-        "tomorrow": sorted(tomorrow, key=lambda x: x["time"])[:N],
+        "today": sorted(today, key=lambda x: x["time"], reverse=True)[:N],
+        "tomorrow": sorted(tomorrow, key=lambda x: x["time"], reverse=True)[:N],
         "errors": []
     }
 
-def section_macro_placeholder(cfg):
-    # Placeholder until API key is provided; keeps structure consistent.
-    return {"today": [], "tomorrow": [], "note": "Подключу TradingEconomics/альтернативу при наличии ключа."}
+def section_macro_forexfactory(cfg, tz):
+    if not cfg["sections"]["macro"]["enabled"]:
+        return {"today": [], "tomorrow": [], "note": "Макро выключено."}
+    url = cfg["sources"]["macro"]["forex_factory"]
+    data = fetch_json(url) or []
+    regions = set(cfg["sections"]["macro"].get("regions", []))
+    high_only = bool(cfg["sections"]["macro"].get("high_impact_only", False))
+    lookahead_h = int(cfg["sections"]["macro"].get("lookahead_hours", 48))
+    tzinfo = ZoneInfo(tz)
+    now_local = now_utc().astimezone(tzinfo)
+    end_local = now_local + timedelta(hours=lookahead_h)
+    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = today_start + timedelta(days=1)
 
-def section_derivatives_placeholder(cfg):
-    return {"today": [], "tomorrow": [], "note": "Deribit/CME подключу (экспирации, фандинг, OI); пороги учтены."}
+    # Region mapping
+    region_countries = {
+        "US": {"USD"},
+        "UK": {"GBP"},
+        "EU": {"EUR", "DEU", "DE", "FRA", "ITA", "ESP"}
+    }
+    allowed = set()
+    for r in regions:
+        allowed |= region_countries.get(r, set())
 
-def section_unlocks_placeholder(cfg):
-    return {"today": [], "tomorrow": [], "note": "TokenUnlocks/альтернативы добавлю при ключе."}
+    def impact_pass(impact):
+        imp = (impact or "").lower()
+        if high_only:
+            return "high" in imp
+        return ("high" in imp) or ("medium" in imp)
 
-def section_risk_placeholder(cfg):
-    return {"today": [], "tomorrow": [], "note": "Инциденты/де-пеги добавлю при подключении источников."}
-
-def render_section(title, data, tz):
-    lines = []
-    if data.get("today") or data.get("tomorrow"):
-        lines.append(f"<b>{title}</b>")
-        if data.get("today"):
-            lines.append("Сегодня:")
-            for e in data["today"]:
-                t = fmt_time(e["time"], tz)
-                lines.append(f"• {t} — {e['title']} ({e.get('source','')})")
-                if e.get("link"):
-                    lines.append(f"  {e['link']}")
-        if data.get("tomorrow"):
-            lines.append("Завтра:")
-            for e in data["tomorrow"]:
-                t = fmt_time(e["time"], tz)
-                lines.append(f"• {t} — {e['title']} ({e.get('source','')})")
-                if e.get("link"):
-                    lines.append(f"  {e['link']}")
-    else:
-        note = data.get("note", "Нет событий по заданным фильтрам.")
-        lines.append(f"<b>{title}</b>\n{note}")
-    return "\n".join(lines)
-
-def main():
-    import argparse
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True)
-    args = ap.parse_args()
-
-    cfg = load_config(args.config)
-    tz = cfg["timezone"]
-    chat_id = cfg["telegram"]["chat_id"]
-    parse_mode = cfg["telegram"].get("parse_mode", "HTML")
-    max_len = int(cfg["telegram"].get("max_message_length", 3500))
-    split_msgs = bool(cfg["telegram"].get("split_long_messages", True))
-    token = os.environ.get("TG_TOKEN")
-    if not token:
-        print("Missing TG_TOKEN env", file=sys.stderr)
-        sys.exit(1)
-
-    # DND check (optional override via input)
-    dnd_cfg = cfg["schedule"].get("dnd", {"enabled": False})
-    override_dnd = (os.environ.get("OVERRIDE_DND", "false").lower() == "true")
-    if dnd_cfg.get("enabled") and not override_dnd:
-        tzinfo = ZoneInfo(tz)
-        now_local = now_utc().astimezone(tzinfo)
-        fmt = "%H:%M"
+    today, tomorrow = [], []
+    for ev in data:
         try:
-            s = datetime.strptime(dnd_cfg["start"], "%H:%M").time()
-            e = datetime.strptime(dnd_cfg["end"], "%H:%M").time()
-            in_dnd = (s <= now_local.time() < e) if s < e else (now_local.time() >= s or now_local.time() < e)
-            if in_dnd:
-                print("DND window active, skipping send")
-                return
+            # ForexFactory fields are commonly: "date", "title", "country", "impact", "timestamp"
+            ts = ev.get("timestamp")
+            if not ts:
+                # fallback try parse 'date' if provided
+                d = ev.get("date")
+                if d:
+                    et = dtp.parse(d)
+                else:
+                    continue
+            else:
+                et = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+            loc = et.astimezone(tzinfo)
+            if not (now_local <= loc <= end_local):
+                continue
+            country = (ev.get("country") or "").upper()
+            if allowed and country not in allowed:
+                continue
+            if not impact_pass(ev.get("impact")):
+                continue
+            title = (ev.get("title") or "").strip()
+            actual = ev.get("actual")
+            forecast = ev.get("forecast")
+            previous = ev.get("previous")
+            details = []
+            if actual: details.append(f"факт: {actual}")
+            if forecast: details.append(f"прогноз: {forecast}")
+            if previous: details.append(f"пред.: {previous}")
+            line = {
+                "time": et,
+                "title": f"{country} — {title}" + (f" ({'; '.join(details)})" if details else "")
+            }
+            if within_day(loc, today_start, today_end):
+                today.append(line)
+            else:
+                tomorrow.append(line)
         except Exception:
-            pass
+            continue
 
-    today_local = to_tz(now_utc(), tz).strftime("%d.%m.%Y")
-    suffix = os.environ.get("MESSAGE_SUFFIX", "")
-    header = f"Ежедневный дайджест • {today_local}"
-    if suffix:
-        header += f" • {suffix}"
+    today = sorted(today, key=lambda x: x["time"])
+    tomorrow = sorted(tomorrow, key=lambda x: x["time"])
+    note = "" if (today or tomorrow) else "Нет макро-событий по фильтрам в горизонте 48ч."
+    return {"today": today, "tomorrow": tomorrow, "note": note}
 
-    # Collect sections
-    macro = section_macro_placeholder(cfg)
-    listings = section_listings(cfg, tz)
-    derivatives = section_derivatives_placeholder(cfg)
-    unlocks = section_unlocks_placeholder(cfg)
-    status = section_status(cfg, tz)
-    risk = section_risk_placeholder(cfg)
+def binance_symbol_for(asset):
+    return f"{asset.upper()}USDT"
 
-    parts = [
-        f"<b>{header}</b>",
-        render_section("Макро", macro, tz),
-        render_section("Листинги", listings, tz),
-        render_section("Деривативы", derivatives, tz),
-        render_section("Разлоки", unlocks, tz),
-        render_section("Сети/Статусы", status, tz),
-        render_section("Риски/Инциденты", risk, tz),
-    ]
-    message = "\n\n".join([p for p in parts if p.strip()])
+def get_binance_funding(url, symbol):
+    try:
+        r = requests.get(url, params={"symbol": symbol, "limit": 1}, timeout=15)
+        if r.status_code == 200:
+            arr = r.json()
+            if isinstance(arr, list) and arr:
+                fr = float(arr[0].get("fundingRate", 0.0))
+                ts = int(arr[0].get("fundingTime", 0)) // 1000
+                return fr, datetime.fromtimestamp(ts, tz=timezone.utc)
+    except Exception:
+        pass
+    return None, None
 
-    if split_msgs and len(message) > max_len:
-        chunks = split_chunks(message, max_len)
-        for i, ch in enumerate(chunks, 1):
-            suffix = f" ({i}/{len(chunks)})" if len(chunks) > 1 else ""
-            tg_send(token, chat_id, ch + suffix, parse_mode=parse_mode)
-            time.sleep(0.7)
-    else:
-        tg_send(token, chat_id, message, parse_mode=parse_mode)
+def get_bybit_funding(url, symbol):
+    try:
+        r = requests.get(url, params={"category": "linear", "symbol": symbol, "limit": 1}, timeout=15)
+        if r.status_code == 200:
+            obj = r.json()
+            if obj.get("retCode") == 0:
+                lst = obj.get("result", {}).get("list", [])
+                if lst:
+                    fr = float(lst[0].get("fundingRate", 0.0))
+                    ts = int(lst[0].get("fundingTime", 0)) // 1000
+                    return fr, datetime.fromtimestamp(ts, tz=timezone.utc)
+    except Exception:
+        pass
+    return None, None
 
-if __name__ == "__main__":
-    main()
+def get_binance_oi_change_pct(url, symbol):
+    try:
+        params = {"symbol": symbol, "period": "1d", "limit": 2}
+        r = requests.get(url, params=params, timeout=20)
+        if r.status_code == 200:
+            arr = r.json()
+            if isinstance(arr, list) and len(arr) >= 2:
+                prev = float(arr[-2]["sumOpenInterest"])
+                cur = float(arr[-1]["sumOpenInterest"])
+                if prev > 0:
+                    return (cur - prev) / prev * 100.0
+    except Exception:
+        pass
+    return None
+
+def section_derivatives(cfg, tz):
+    if not cfg["sections"]["derivatives"]["enabled"]:
+        return {"today": [], "tomorrow": [], "note": "Деривативы выключены."}
+
+    tzinfo = ZoneInfo(tz)
+    now_local = now_utc().astimezone(tzinfo)
+    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = today_start + timedelta(days=1)
+    tomorrow_end = today_start + timedelta(days=2)
+
+    items_today, items_tomorrow = [], []
+
+    # 1) Deribit expiry notional aggregation (BTC, ETH)
+    try:
+        base_url = cfg["sources"]["derivatives"]["deribit_book_summary"]
+        for curr in ["BTC", "ETH"]:
+            params = {"currency": curr, "kind": "option"}
+            r = requests.get(base_url, params=params, timeout=25)
+            if r.status_code != 200:
+                continue
+            res = r.json().get("result", [])
+            # group by expiration
+            buckets = {}
+            for it in res:
+                # Fields per item commonly: instrument_name, underlying_price, open_interest, expiration_timestamp
+                exp_ts = it.get("expiration_timestamp")
+                if not exp_ts:
+                    # parse from instrument_name: BTC-30AUG24-60000-C
+                    name = it.get("instrument_name", "")
+                    try:
+                        parts = name.split("-")
+                        dt_part = parts[1]
+                        exp = dtp.parse(dt_part)
+                        exp_ts = int(exp.replace(tzinfo=timezone.utc).timestamp() * 1000)
+                    except Exception:
+                        continue
+                exp_dt = datetime.fromtimestamp(int(exp_ts) / 1000, tz=timezone.utc)
+                und = float(it.get("underlying_price") or 0.0)
+                oi = float(it.get("open_interest") or 0.0)
+                notional = oi * und
+                buckets.setdefault(exp_dt, 0.0)
+                buckets[exp_dt] += notional
+            # Evaluate buckets against threshold and day grouping
+            thr = float(cfg["sections"]["derivatives"].get("deribit_expiry_notional_min_usd", 2e8))
+            for exp_dt, notional in buckets.items():
+                if notional >= thr:
+                    loc = exp_dt.astimezone(tzinfo)
+                    line = {
+                        "time": exp_dt,
+                        "title": f"Deribit {curr} экспирация: ≈ ${int(notional):,}".replace(",", " ")
+                    }
+                    if within_day(loc, today_start, today_end):
+                        items_today.append(line)
+                    elif within_day(loc, today_end, tomorrow_end):
+                        items_tomorrow.append(line)
+    except Exception:
+        pass
+
+    # 2) Funding extremes (Binance/Bybit)
+    funding_thr_bps = float(cfg["sections"]["derivatives"].get("funding_extreme_threshold_bps", 10))
+    funding_exchanges = cfg["sections"]["derivatives"].get("funding_exchanges", ["binance", "bybit"])
+    for asset in cfg["watchlists"]["tickers"]:
+        sym_bin = binance_symbol_for(asset)
+        # Binance
+        if "binance" in funding_exchanges:
+            fr, ts = get_binance_funding(cfg["sources"]["derivatives"]["binance_funding"], sym_bin)
+            if fr is not None:
+                bps = abs(fr) * 10000.0
+                if bps >= funding_thr_bps:
+                    line = {
+                        "time": ts or now_utc(),
+                        "title": f"Funding {asset} (Binance): {fr*100:.3f}% (~{bps:.1f} б.п.)"
+                    }
+                    loc = (ts or now_utc()).astimezone(tzinfo)
+                    if within_day(loc, today_start, today_end):
+                        items_today.append(line)
+                    elif within_day(loc, today_end, tomorrow_end):
+                        items_tomorrow.append(line)
+        # Bybit
+        if "bybit" in funding_exchanges:
+            fr, ts = get_bybit_funding(cfg["sources"]["derivatives"]["bybit_funding"], sym_bin)
+            if fr is not None:
+                bps = abs(fr) * 10000.0
+                if bps >= funding_thr_bps:
+                    line = {
+                        "time": ts or now_utc(),
+                        "title": f"Funding {asset} (Bybit): {fr*100:.3f}% (~{bps:.1f} б.п.)"
+                    }
+                    loc = (ts or now_utc()).astimezone(tzinfo)
+                    if within_day(loc, today_start, today_end):
+                        items_today.append(line)
+                    elif within_day(loc, today_end, tomorrow_end):
+                        items_tomorrow.append(line)
+
+    # 3) Binance OI 24h Δ
+    oi_thr = float(cfg["sections"]["derivatives"].get("oi_change_threshold_pct", 10))
+    for asset in cfg["watchlists"]["tickers"]:
+        sym_bin = binance_symbol_for(asset)
+        pct = get_binance_oi_change_pct(cfg["sources"]["derivatives"]["binance_oi_hist"], sym_bin)
+        if pct is not None and abs(pct) >= oi_thr:
+            line = {
+                "time": now_utc(),
+                "title
+to be continued...
